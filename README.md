@@ -13,7 +13,7 @@ go install github.com/lkendrickd/go-sec-lint@latest
 Or build from source:
 
 ```sh
-git clone https://github.com/lkendricd/go-sec-lint.git
+git clone https://github.com/lkendrickd/go-sec-lint.git
 cd go-sec-lint
 make build
 ```
