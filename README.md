@@ -67,6 +67,14 @@ All scanners run by default. Pass individual flags to run a subset.
 | `--blockchain-c2` | `blockchain-c2` | Solana/Ethereum RPC calls, SDK imports, memo field parsing, and transaction polling patterns indicative of [blockchain-based C2 dead-drops](https://dev.to/ohmygod/glassworms-solana-c2-how-a-supply-chain-monster-turned-the-blockchain-into-a-dead-drop-56dd) |
 | `--git-anomaly` | `git-anomaly` | Author-vs-committer date skew >7 days in recent commits, indicating force-pushed or rebased malicious history |
 
+## Triggers in this repository
+This binary eats it's own dog food. Here are some of the things it finds in this repo because of the mechanisms used in the actual code:
+
+```
+Found 45 threat(s) in 6 file(s) (15 files scanned)
+  Breakdown: 2 homoglyph, 10 obfuscation, 1 polyglot, 32 blockchain-c2
+```
+
 ## What these threats actually are
 
 Not everyone has seen these attacks before. Here's what each one does in plain terms.

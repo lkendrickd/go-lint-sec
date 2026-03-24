@@ -4,7 +4,9 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/dk/go-sec-lint/internal/output"
 	"github.com/dk/go-sec-lint/internal/scan"
@@ -123,41 +125,80 @@ func buildExtensions(ext string) map[string]bool {
 	return extensions
 }
 
+// fileResult holds the scan output for a single file, preserving order for
+// deterministic output after parallel scanning completes.
+type fileResult struct {
+	path     string
+	findings []scan.Finding
+	err      error
+}
+
 func runScan(paths []string, extensions, checks map[string]bool, printer *output.Printer) scan.Results {
 	files := scan.CollectFiles(paths, extensions)
 	res := scan.Results{Counts: map[scan.Category]int{}}
+	res.TotalFiles = len(files)
 
-	for _, f := range files {
-		res.TotalFiles++
-		results, err := scan.File(f, checks)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "  warning: %v\n", err)
+	// Scan files in parallel using a semaphore-bounded worker pool.
+	sem := make(chan struct{}, runtime.NumCPU())
+	results := make([]fileResult, len(files))
+	var wg sync.WaitGroup
+
+	for i, f := range files {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(idx int, path string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			findings, err := scan.File(path, checks)
+			results[idx] = fileResult{path: path, findings: findings, err: err}
+		}(i, f)
+	}
+
+	// Run git scanner concurrently alongside file scanning.
+	var gitResults []fileResult
+	var gitWg sync.WaitGroup
+	if checks["git-anomaly"] {
+		gitWg.Add(1)
+		go func() {
+			defer gitWg.Done()
+			for _, p := range paths {
+				findings, err := scan.ScanGitAnomalies(p)
+				gitResults = append(gitResults, fileResult{path: p, findings: findings, err: err})
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	// Print file findings in original order for deterministic output.
+	for _, fr := range results {
+		if fr.err != nil {
+			fmt.Fprintf(os.Stderr, "  warning: %v\n", fr.err)
 		}
-		if len(results) == 0 {
+		if len(fr.findings) == 0 {
 			continue
 		}
 		res.FilesWithFindings++
-		res.TotalFindings += len(results)
-		for _, r := range results {
+		res.TotalFindings += len(fr.findings)
+		for _, r := range fr.findings {
 			res.Counts[r.Category]++
 		}
-		printer.FileFindings(f, results)
+		printer.FileFindings(fr.path, fr.findings)
 	}
 
-	if checks["git-anomaly"] {
-		for _, p := range paths {
-			gitFindings, err := scan.ScanGitAnomalies(p)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "  warning: git scan: %v\n", err)
+	// Collect git results.
+	gitWg.Wait()
+	for _, gr := range gitResults {
+		if gr.err != nil {
+			fmt.Fprintf(os.Stderr, "  warning: git scan: %v\n", gr.err)
+		}
+		if len(gr.findings) > 0 {
+			res.TotalFindings += len(gr.findings)
+			res.FilesWithFindings++
+			for _, r := range gr.findings {
+				res.Counts[r.Category]++
 			}
-			if len(gitFindings) > 0 {
-				res.TotalFindings += len(gitFindings)
-				res.FilesWithFindings++
-				for _, r := range gitFindings {
-					res.Counts[r.Category]++
-				}
-				printer.GitFindings(gitFindings)
-			}
+			printer.GitFindings(gr.findings)
 		}
 	}
 
